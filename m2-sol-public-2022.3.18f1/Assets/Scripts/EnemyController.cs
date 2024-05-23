@@ -79,57 +79,7 @@ public class EnemyController : NetworkBehaviour
         }
     }
 
-    [Server]
-    private IEnumerator FindPlayer()
-    {
-        while (player == null)
-        {
-            var connections = NetworkServer.connections;
-            Debug.Log("Number of connections: " + connections.Count);
-
-            foreach (var kvp in connections)
-            {
-                NetworkConnectionToClient conn = kvp.Value;
-                if (conn != null)
-                {
-                    Debug.Log($"Checking connection: {conn.connectionId}, isReady: {conn.isReady}");
-
-                    if (conn.isReady)
-                    {
-                        // Iterar sobre todos los objetos en la escena
-                        foreach (NetworkIdentity networkIdentity in NetworkServer.spawned.Values)
-                        {
-                            if (networkIdentity.connectionToClient == conn)
-                            {
-                                GameObject obj = networkIdentity.gameObject;
-                                Debug.Log($"Checking object: {obj.name}, isLocalPlayer: {networkIdentity.isLocalPlayer}");
-                                if (networkIdentity.isLocalPlayer)
-                                {
-                                    player = obj.transform;
-                                    Debug.Log($"Local player found: {obj.name}");
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if (player != null)
-                {
-                    break;
-                }
-            }
-
-            if (player == null)
-            {
-                Debug.LogWarning("Player not found, retrying...");
-            }
-
-            yield return new WaitForSeconds(1f); // retry every second
-        }
-    }
-
-
+    //[Server]
     //private IEnumerator FindPlayer()
     //{
     //    while (player == null)
@@ -137,12 +87,35 @@ public class EnemyController : NetworkBehaviour
     //        var connections = NetworkServer.connections;
     //        Debug.Log("Number of connections: " + connections.Count);
 
-    //        foreach (var identity in NetworkServer.spawned.Values)
+    //        foreach (var kvp in connections)
     //        {
-    //            if (identity != null && identity.isLocalPlayer)
+    //            NetworkConnectionToClient conn = kvp.Value;
+    //            if (conn != null)
     //            {
-    //                player = identity.transform;
-    //                Debug.Log($"Player found: {identity.gameObject.name}");
+    //                Debug.Log($"Checking connection: {conn.connectionId}, isReady: {conn.isReady}");
+
+    //                if (conn.isReady)
+    //                {
+    //                    // Iterar sobre todos los objetos en la escena
+    //                    foreach (NetworkIdentity networkIdentity in NetworkServer.spawned.Values)
+    //                    {
+    //                        if (networkIdentity.connectionToClient == conn)
+    //                        {
+    //                            GameObject obj = networkIdentity.gameObject;
+    //                            Debug.Log($"Checking object: {obj.name}, isLocalPlayer: {networkIdentity.isLocalPlayer}");
+    //                            if (networkIdentity.isLocalPlayer)
+    //                            {
+    //                                player = obj.transform;
+    //                                Debug.Log($"Local player found: {obj.name}");
+    //                                break;
+    //                            }
+    //                        }
+    //                    }
+    //                }
+    //            }
+
+    //            if (player != null)
+    //            {
     //                break;
     //            }
     //        }
@@ -155,6 +128,31 @@ public class EnemyController : NetworkBehaviour
     //        yield return new WaitForSeconds(1f); // retry every second
     //    }
     //}
+
+
+    [Server]
+    private IEnumerator FindPlayer()
+    {
+        while (player == null)
+        {
+            foreach (var identity in NetworkServer.spawned.Values)
+            {
+                if (identity != null && identity.GetComponent<TankController>() != null)
+                {
+                    player = identity.transform;
+                    Debug.Log($"Player found: {identity.gameObject.name}");
+                    break;
+                }
+            }
+
+            if (player == null)
+            {
+                Debug.LogWarning("Player not found, retrying...");
+            }
+
+            yield return new WaitForSeconds(1f); // retry every second
+        }
+    }
 
     [Server]
     private void DetectPlayer()
