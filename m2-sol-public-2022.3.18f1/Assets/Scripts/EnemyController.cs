@@ -21,7 +21,7 @@ public class EnemyController : NetworkBehaviour
     private NavMeshAgent agent;
     private int currentPatrolIndex = 0;
     [SyncVar]
-    private Transform player;
+    private List<Transform> players = new List<Transform>();
     [SyncVar]
     public bool playerDetected = false;
     private float nextFireTime = 0f;
@@ -48,7 +48,7 @@ public class EnemyController : NetworkBehaviour
 
         if (isServer)
         {
-            StartCoroutine(FindPlayer());
+            StartCoroutine(FindPlayers());
         }
     }
 
@@ -56,7 +56,7 @@ public class EnemyController : NetworkBehaviour
     {
         if (isServer)
         {
-            if (player == null)
+            if (players.Count == 0)
             {
                 return;
             }
@@ -79,75 +79,23 @@ public class EnemyController : NetworkBehaviour
         }
     }
 
-    //[Server]
-    //private IEnumerator FindPlayer()
-    //{
-    //    while (player == null)
-    //    {
-    //        var connections = NetworkServer.connections;
-    //        Debug.Log("Number of connections: " + connections.Count);
-
-    //        foreach (var kvp in connections)
-    //        {
-    //            NetworkConnectionToClient conn = kvp.Value;
-    //            if (conn != null)
-    //            {
-    //                Debug.Log($"Checking connection: {conn.connectionId}, isReady: {conn.isReady}");
-
-    //                if (conn.isReady)
-    //                {
-    //                    // Iterar sobre todos los objetos en la escena
-    //                    foreach (NetworkIdentity networkIdentity in NetworkServer.spawned.Values)
-    //                    {
-    //                        if (networkIdentity.connectionToClient == conn)
-    //                        {
-    //                            GameObject obj = networkIdentity.gameObject;
-    //                            Debug.Log($"Checking object: {obj.name}, isLocalPlayer: {networkIdentity.isLocalPlayer}");
-    //                            if (networkIdentity.isLocalPlayer)
-    //                            {
-    //                                player = obj.transform;
-    //                                Debug.Log($"Local player found: {obj.name}");
-    //                                break;
-    //                            }
-    //                        }
-    //                    }
-    //                }
-    //            }
-
-    //            if (player != null)
-    //            {
-    //                break;
-    //            }
-    //        }
-
-    //        if (player == null)
-    //        {
-    //            Debug.LogWarning("Player not found, retrying...");
-    //        }
-
-    //        yield return new WaitForSeconds(1f); // retry every second
-    //    }
-    //}
-
-
     [Server]
-    private IEnumerator FindPlayer()
+    private IEnumerator FindPlayers()
     {
-        while (player == null)
+        while (players.Count == 0)
         {
             foreach (var identity in NetworkServer.spawned.Values)
             {
                 if (identity != null && identity.GetComponent<TankController>() != null)
                 {
-                    player = identity.transform;
+                    players.Add(identity.transform);
                     Debug.Log($"Player found: {identity.gameObject.name}");
-                    break;
                 }
             }
 
-            if (player == null)
+            if (players.Count == 0)
             {
-                Debug.LogWarning("Player not found, retrying...");
+                Debug.LogWarning("Players not found, retrying...");
             }
 
             yield return new WaitForSeconds(1f); // retry every second
@@ -155,25 +103,29 @@ public class EnemyController : NetworkBehaviour
     }
 
     [Server]
-    private void DetectPlayer()
+    private void DetectPlayers()
     {
-        if (player == null) return;
-
-        Vector3 dirToPlayer = player.position - transform.position;
-        float angleToPlayer = Vector3.Angle(transform.forward, dirToPlayer);
-
-        if (angleToPlayer < detectionAngle / 2f && dirToPlayer.magnitude < detectionRange)
+        foreach (var player in players)
         {
-            if (turretMode)
+            if (player == null) continue;
+
+            Vector3 dirToPlayer = player.position - transform.position;
+            float angleToPlayer = Vector3.Angle(transform.forward, dirToPlayer);
+
+            if (angleToPlayer < detectionAngle / 2f && dirToPlayer.magnitude < detectionRange)
             {
-                currentState = State.Shooting;
+                if (turretMode)
+                {
+                    currentState = State.Shooting;
+                }
+                else
+                {
+                    currentState = State.Chasing;
+                }
+                playerDetected = true;
+                RpcUpdateState(currentState, playerDetected);
+                break;
             }
-            else
-            {
-                currentState = State.Chasing;
-            }
-            playerDetected = true;
-            RpcUpdateState(currentState, playerDetected);
         }
     }
 
@@ -192,58 +144,93 @@ public class EnemyController : NetworkBehaviour
             SetDestinationToNextPatrolPoint();
         }
 
-        DetectPlayer();
+        DetectPlayers();
     }
 
     private void ChasePlayer()
     {
         agent.speed = chaseSpeed;
-        agent.SetDestination(player.position);
+        Transform closestPlayer = GetClosestPlayer();
 
-        if (Vector3.Distance(transform.position, player.position) < attackRange)
+        if (closestPlayer != null)
         {
-            currentState = State.Attacking;
+            agent.SetDestination(closestPlayer.position);
+
+            if (Vector3.Distance(transform.position, closestPlayer.position) < attackRange)
+            {
+                currentState = State.Attacking;
+            }
+            else if (Vector3.Distance(transform.position, closestPlayer.position) > detectionRange)
+            {
+                currentState = State.Patrolling;
+                playerDetected = false;
+            }
         }
-        else if (Vector3.Distance(transform.position, player.position) > detectionRange)
+    }
+
+    private Transform GetClosestPlayer()
+    {
+        Transform closestPlayer = null;
+        float closestDistance = Mathf.Infinity;
+
+        foreach (var player in players)
         {
-            currentState = State.Patrolling;
-            playerDetected = false;
+            if (player == null) continue;
+
+            float distance = Vector3.Distance(transform.position, player.position);
+            if (distance < closestDistance)
+            {
+                closestDistance = distance;
+                closestPlayer = player;
+            }
         }
+
+        return closestPlayer;
     }
 
     private void Shoot()
     {
         agent.speed = 0f;
-        Vector3 dirToPlayer = player.position - transform.position;
-        transform.rotation = Quaternion.LookRotation(dirToPlayer);
+        Transform closestPlayer = GetClosestPlayer();
 
-        if (playerDetected && Time.time >= nextFireTime)
+        if (closestPlayer != null)
         {
-            ShootAtPlayer();
-            nextFireTime = Time.time + 1f / fireRate;
-        }
+            Vector3 dirToPlayer = closestPlayer.position - transform.position;
+            transform.rotation = Quaternion.LookRotation(dirToPlayer);
 
-        if (Vector3.Distance(transform.position, player.position) > detectionRange)
-        {
-            currentState = State.Patrolling;
-            playerDetected = false;
+            if (playerDetected && Time.time >= nextFireTime)
+            {
+                ShootAtPlayer();
+                nextFireTime = Time.time + 1f / fireRate;
+            }
+
+            if (Vector3.Distance(transform.position, closestPlayer.position) > detectionRange)
+            {
+                currentState = State.Patrolling;
+                playerDetected = false;
+            }
         }
     }
 
     private void AttackPlayer()
     {
-        Vector3 dirToPlayer = player.position - transform.position;
-        transform.rotation = Quaternion.LookRotation(dirToPlayer);
+        Transform closestPlayer = GetClosestPlayer();
 
-        if (playerDetected && Time.time >= nextFireTime)
+        if (closestPlayer != null)
         {
-            Instantiate(attackMelee, firePoint.position, firePoint.rotation);
-            nextFireTime = Time.time + 1f / fireRate;
-        }
+            Vector3 dirToPlayer = closestPlayer.position - transform.position;
+            transform.rotation = Quaternion.LookRotation(dirToPlayer);
 
-        if (Vector3.Distance(transform.position, player.position) > attackRange)
-        {
-            currentState = State.Chasing;
+            if (playerDetected && Time.time >= nextFireTime)
+            {
+                Instantiate(attackMelee, firePoint.position, firePoint.rotation);
+                nextFireTime = Time.time + 1f / fireRate;
+            }
+
+            if (Vector3.Distance(transform.position, closestPlayer.position) > attackRange)
+            {
+                currentState = State.Chasing;
+            }
         }
     }
 
